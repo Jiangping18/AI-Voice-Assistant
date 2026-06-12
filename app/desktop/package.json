@@ -1,0 +1,27 @@
+{
+  "name": "ai-voice-assistant-desktop",
+  "version": "0.1.0",
+  "description": "AI 智能录音助手 - PC 桌面端（Electron）",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "tsc && electron .",
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "start": "electron .",
+    "clean": "rm -rf dist",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest --config jest.config.js"
+  },
+  "dependencies": {
+    "sherpa-onnx": "^1.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "electron": "^30.0.0",
+    "typescript": "^5.4.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

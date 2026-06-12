@@ -1,0 +1,670 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ASR 服务模块 - 外部接口定义 (JSON Schema)",
+  "description": "本文件以 JSON Schema 格式描述 services/ 下所有模块对外暴露的接口，包括输入消息格式、输出消息格式、音频编码规范。",
+  "lastUpdated": "2026-06-12",
+
+  "modules": {
+
+    "======================== 核心类型 (asr/types) ========================": {},
+
+    "ASRSegment": {
+      "description": "单段识别结果。整个系统的核心输出单元，PIPELEINE/ASR/STREAM 三个入口最终都归约为该格式的数组。",
+      "type": "object",
+      "required": ["speaker", "text", "start", "end"],
+      "properties": {
+        "speaker": {
+          "type": "string",
+          "description": "说话人标签。Sherpa-ONNX 聚类输出格式为 'speaker_N'，单说话人场景为 'unknown'。",
+          "examples": ["speaker_0", "speaker_1", "unknown"]
+        },
+        "text": {
+          "type": "string",
+          "description": "识别并经过文本清洗后的文本。包含标点符号，已过滤语气词。",
+          "examples": ["今天天气真不错，我们出去走走好吗。", "好的，我马上处理。"]
+        },
+        "start": {
+          "type": "number",
+          "description": "该段音频的起始时间（秒，相对于音频文件开头）",
+          "minimum": 0,
+          "examples": [0.0, 3.2]
+        },
+        "end": {
+          "type": "number",
+          "description": "该段音频的结束时间（秒，相对于音频文件开头）",
+          "minimum": 0,
+          "examples": [2.5, 5.0]
+        }
+      }
+    },
+
+    "ASRResult": {
+      "description": "完整音频文件的识别结果（顶层包装结构）。下游智能体4、5、6等统一使用此格式。",
+      "type": "object",
+      "required": ["audio_id", "duration", "segments", "full_text"],
+      "properties": {
+        "audio_id": {
+          "type": "string",
+          "description": "唯一音频标识。由文件名自动生成或调用方传入。",
+          "examples": ["meeting_20260612", "stream_1747128000000"]
+        },
+        "duration": {
+          "type": "number",
+          "description": "音频总时长（秒）",
+          "minimum": 0
+        },
+        "segments": {
+          "type": "array",
+          "description": "识别结果片段列表",
+          "items": { "$ref": "#/modules/ASRSegment" }
+        },
+        "full_text": {
+          "type": "string",
+          "description": "完整对话文本。所有片段按时间顺序拼接，每段带说话人前缀。",
+          "examples": ["speaker_0：今天开会讨论一下项目进度。speaker_1：好的我先汇报一下。"]
+        }
+      }
+    },
+
+    "======================== 入口一：Pipeline 全流程编排 (pipeline/index) ========================": {},
+
+    "transcribeAudio": {
+      "description": "一键处理音频文件的便捷函数。内部自动完成：ASR → 说话人分离 → 文本清洗 → 时间线融合。",
+      "type": "function",
+      "input": {
+        "type": "object",
+        "required": ["audioFilePath"],
+        "properties": {
+          "audioFilePath": {
+            "type": "string",
+            "description": "音频文件的绝对路径。内部通过 ffmpeg 或 WAV 解析自动转为 16kHz/单声道/float32 PCM。",
+            "examples": ["F:/recordings/meeting.wav", "/data/audio/001.mp3"]
+          }
+        }
+      },
+      "output": {
+        "$ref": "#/modules/ASRResult"
+      },
+      "errors": [
+        { "type": "Error", "description": "文件不存在" },
+        { "type": "Error", "description": "不支持的音频格式" },
+        { "type": "Error", "description": "ffmpeg 转码失败（非 WAV/PCM 格式需要系统安装 ffmpeg）" },
+        { "type": "Error", "description": "Sherpa-ONNX 引擎初始化失败" },
+        { "type": "Error", "description": "ASR 识别未产生任何文本结果" }
+      ]
+    },
+
+    "ASRPipeline": {
+      "description": "完整 ASR Pipeline 类。支持构造阶段传入配置和进度回调。",
+      "constructor": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "config": {
+            "description": "可选，部分覆盖 PipelineConfig 的字段。",
+            "$ref": "#/modules/PipelineConfig"
+          },
+          "callbacks": {
+            "description": "可选，进度回调函数。",
+            "$ref": "#/modules/PipelineCallbacks"
+          }
+        }
+      },
+      "methods": {
+        "initialize": {
+          "description": "初始化所有底层服务（异步加载 ASR 模型和说话人嵌入模型）。应在 processFile 之前调用一次。",
+          "input": {},
+          "output": { "type": "null", "description": "Promise<void>" }
+        },
+        "processFile": {
+          "description": "处理单个完整的音频文件。",
+          "input": {
+            "type": "object",
+            "required": ["audioFilePath"],
+            "properties": {
+              "audioFilePath": {
+                "type": "string",
+                "description": "音频文件绝对路径",
+                "examples": ["F:/recordings/meeting.wav"]
+              },
+              "options": {
+                "type": "object",
+                "properties": {
+                  "diarizationWindow": {
+                    "type": "number",
+                    "description": "说话人分离滑窗时长（秒），默认 1.5",
+                    "default": 1.5,
+                    "minimum": 0.5,
+                    "maximum": 5.0
+                  }
+                }
+              }
+            }
+          },
+          "output": {
+            "description": "Promise<ASRResult>，即 ASRSegment[]。",
+            "$ref": "#/modules/ASRResult"
+          }
+        },
+        "getStats": {
+          "description": "获取最近一次 processFile 的执行统计。processFile 调用前返回 null。",
+          "input": {},
+          "output": { "$ref": "#/modules/PipelineStats" }
+        },
+        "getState": {
+          "description": "获取当前 Pipeline 执行状态。",
+          "input": {},
+          "output": { "$ref": "#/modules/PipelineState" }
+        },
+        "release": {
+          "description": "释放所有底层引擎资源（模型从内存卸载）。",
+          "input": {},
+          "output": { "type": "null" }
+        }
+      }
+    },
+
+    "PipelineState": {
+      "description": "Pipeline 生命周期状态枚举。",
+      "type": "string",
+      "enum": ["idle", "loading_audio", "asr", "diarization", "text_cleaning", "merging", "completed", "error"]
+    },
+
+    "PipelineCallbacks": {
+      "description": "Pipeline 进度回调接口。所有字段可选。",
+      "type": "object",
+      "properties": {
+        "onStateChange": {
+          "type": "function",
+          "signature": "(state: PipelineState, detail?: string) => void",
+          "description": "状态变更时触发。detail 为当前状态的中文描述。"
+        },
+        "onProgress": {
+          "type": "function",
+          "signature": "(percent: number, message: string) => void",
+          "description": "进度通知。percent: 0-100 整数，message: 当前步骤中文描述。"
+        },
+        "onSegment": {
+          "type": "function",
+          "signature": "(segment: ASRSegment) => void",
+          "description": "每完成一段识别时触发（融合说话人标签后，文本清洗前）。"
+        },
+        "onError": {
+          "type": "function",
+          "signature": "(error: Error) => void",
+          "description": "处理过程中发生错误时触发。"
+        },
+        "onComplete": {
+          "type": "function",
+          "signature": "(result: ASRResult) => void",
+          "description": "全部处理完成时触发，携带完整结果。"
+        }
+      }
+    },
+
+    "PipelineStats": {
+      "description": "Pipeline 执行统计信息。processFile 完成后通过 getStats() 获取。",
+      "type": "object",
+      "required": ["audioDurationSec", "asrTimeMs", "diarizationTimeMs", "textCleaningTimeMs", "totalTimeMs", "segmentCount", "speakerCount"],
+      "properties": {
+        "audioDurationSec": { "type": "number", "description": "音频文件时长（秒）" },
+        "asrTimeMs": { "type": "number", "description": "ASR 识别耗时（毫秒）" },
+        "diarizationTimeMs": { "type": "number", "description": "说话人分离耗时（毫秒）" },
+        "textCleaningTimeMs": { "type": "number", "description": "文本清洗耗时（毫秒）" },
+        "totalTimeMs": { "type": "number", "description": "全过程总耗时（毫秒）" },
+        "segmentCount": { "type": "integer", "description": "识别片段总数", "minimum": 0 },
+        "speakerCount": { "type": "integer", "description": "检测到的不同说话人数量", "minimum": 1 }
+      }
+    },
+
+    "PipelineConfig": {
+      "description": "完整 Pipeline 配置。构造 ASRPipeline 时可传入部分字段覆盖默认值。",
+      "type": "object",
+      "properties": {
+        "asr": { "$ref": "#/modules/OnlineASRConfig", "description": "ASR 引擎配置" },
+        "endpoint": { "$ref": "#/modules/EndpointConfig", "description": "端点检测配置" },
+        "diarization": { "$ref": "#/modules/DiarizationConfig", "description": "说话人分离配置" },
+        "textCleaning": { "$ref": "#/modules/TextCleaningConfig", "description": "文本清洗配置" },
+        "audio": { "$ref": "#/modules/AudioInputConfig", "description": "音频输入参数" }
+      }
+    },
+
+    "======================== 入口二：ASR 服务 (asr/index) ========================": {},
+
+    "createASRService": {
+      "description": "创建 ASR 服务实例的工厂函数。仅做语音识别，不含说话人分离和文本清洗。",
+      "type": "function",
+      "input": {
+        "type": "object",
+        "properties": {
+          "config": {
+            "description": "可选，部分覆盖 OnlineASRConfig。",
+            "$ref": "#/modules/OnlineASRConfig"
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "description": "ASRService 实例"
+      }
+    },
+
+    "ASRService": {
+      "description": "ASR 原始服务类。只做语音转文字，不包含说话人分离和文本清洗。",
+      "methods": {
+        "initialize": {
+          "description": "加载 ASR 模型，异步。",
+          "input": {}, "output": { "type": "null", "description": "Promise<void>" }
+        },
+        "transcribeFile": {
+          "description": "转写完整音频文件。",
+          "input": {
+            "type": "object",
+            "required": ["audioFilePath"],
+            "properties": {
+              "audioFilePath": {
+                "type": "string",
+                "description": "音频文件绝对路径（支持 wav/pcm/mp3/m4a/opus/aac/ogg）"
+              }
+            }
+          },
+          "output": {
+            "$ref": "#/modules/ASRResult",
+            "description": "注意：speaker 字段始终为 'unknown'，因本模块不做说话人分离"
+          }
+        },
+        "release": { "description": "释放引擎资源。", "input": {}, "output": { "type": "null" } }
+      }
+    },
+
+    "======================== 入口三：流式解码器 (asr/stream) ========================": {},
+
+    "StreamingDecoder": {
+      "description": "流式解码器。边接收 PCM 音频片段边输出识别结果，支持端点检测自动分段。适合实时录音场景。",
+      "constructor": {
+        "type": "object",
+        "properties": {
+          "config": { "$ref": "#/modules/OnlineASRConfig", "description": "ASR 引擎配置" },
+          "callbacks": { "$ref": "#/modules/StreamCallbacks", "description": "流式结果回调" }
+        }
+      },
+      "methods": {
+        "start": {
+          "description": "初始化并启动流式识别。异步，需 await。",
+          "input": {},
+          "output": { "type": "null", "description": "Promise<void>" }
+        },
+        "feed": {
+          "description": "喂入 PCM 音频片段（重要：关于 PCM 编码格式见下文【音频编码规范】）。",
+          "input": {
+            "type": "object",
+            "required": ["samples"],
+            "properties": {
+              "samples": {
+                "type": "Float32Array",
+                "description": "PCM float32 音频数据。要求：16000Hz / 单声道 / float32 范围[-1, 1]。每帧建议 10~100ms 数据（160~1600 个采样点）。",
+                "constraints": {
+                  "sampleRate": 16000,
+                  "channels": 1,
+                  "format": "float32",
+                  "range": "[-1.0, 1.0]",
+                  "chunkSize": "建议 160~1600 个采样点（10~100ms）"
+                }
+              }
+            }
+          },
+          "output": { "type": "void" }
+        },
+        "finish": {
+          "description": "通知解码器音频输入结束。触发最后一段的 finalize 并释放底层资源。",
+          "input": {},
+          "output": { "type": "void" }
+        },
+        "setSpeaker": {
+          "description": "由外部说话人分离模块调用，设置当前音频段的说话人标签。说话人变更时会自动结束当前 ASR 段并开始新段。",
+          "input": {
+            "type": "object",
+            "required": ["speaker"],
+            "properties": {
+              "speaker": {
+                "type": "string",
+                "description": "说话人标签，如 'speaker_0'",
+                "examples": ["speaker_0", "speaker_1"]
+              }
+            }
+          },
+          "output": { "type": "void" }
+        },
+        "getResult": {
+          "description": "获取所有已完成的识别结果段。可随时调用，finish 后返回完整结果。",
+          "input": {},
+          "output": { "$ref": "#/modules/ASRResult" }
+        },
+        "getState": {
+          "description": "获取当前解码器状态。",
+          "input": {},
+          "output": { "$ref": "#/modules/StreamState" }
+        }
+      }
+    },
+
+    "StreamState": {
+      "description": "流式解码器状态枚举。",
+      "type": "string",
+      "enum": ["idle", "listening", "decoding", "endpoint", "finished", "error"]
+    },
+
+    "StreamCallbacks": {
+      "description": "流式解码回调接口。所有字段可选。",
+      "type": "object",
+      "properties": {
+        "onPartialResult": {
+          "type": "function",
+          "signature": "(text: string, start: number, end: number) => void",
+          "description": "中间识别结果回调。每次 feed 后可能触发，text 为当前已识别文本（可能随更多音频输入而变化）。"
+        },
+        "onFinalResult": {
+          "type": "function",
+          "signature": "(segment: ASRSegment) => void",
+          "description": "一段识别完成后触发。包含说话人标签、文本和时间戳。"
+        },
+        "onSpeakerChange": {
+          "type": "function",
+          "signature": "(newSpeaker: string, timestamp: number) => void",
+          "description": "说话人变更事件。由外部 setSpeaker() 调用触发。"
+        },
+        "onError": {
+          "type": "function",
+          "signature": "(error: Error) => void",
+          "description": "解码过程发生错误时触发。"
+        },
+        "onStateChange": {
+          "type": "function",
+          "signature": "(state: StreamState) => void",
+          "description": "解码器状态变更时触发。"
+        }
+      }
+    },
+
+    "======================== 入口四：说话人分离服务 (diarization/index) ========================": {},
+
+    "DiarizationService": {
+      "description": "独立的说话人分离服务。不依赖 ASR，可单独使用对音频进行说话人分段。",
+      "methods": {
+        "initialize": {
+          "description": "加载说话人嵌入模型。",
+          "input": {}, "output": { "type": "null", "description": "Promise<void>" }
+        },
+        "diarizeFile": {
+          "description": "对音频文件进行说话人分离。",
+          "input": {
+            "type": "object",
+            "required": ["audioFilePath"],
+            "properties": {
+              "audioFilePath": { "type": "string", "description": "音频文件绝对路径" }
+            }
+          },
+          "output": { "$ref": "#/modules/DiarizationResult" }
+        },
+        "release": { "description": "释放引擎资源。", "input": {}, "output": { "type": "null" } }
+      }
+    },
+
+    "DiarizationResult": {
+      "description": "说话人分离结果。注意：与 ASRSegment 不同，DiarizationSegment 不含 text 字段。",
+      "type": "array",
+      "items": { "$ref": "#/modules/DiarizationSegment" }
+    },
+
+    "DiarizationSegment": {
+      "description": "说话人分离结果片段。",
+      "type": "object",
+      "required": ["speaker", "start", "end"],
+      "properties": {
+        "speaker": { "type": "string", "description": "说话人标签", "examples": ["SPEAKER_00", "SPEAKER_01"] },
+        "start": { "type": "number", "description": "开始时间（秒）" },
+        "end": { "type": "number", "description": "结束时间（秒）" }
+      }
+    },
+
+    "======================== 入口五：文本清洗服务 (text-cleaning/index) ========================": {},
+
+    "TextCleaner": {
+      "description": "独立的文本清洗器。对 ASR 原始输出进行后处理。可直接用于清洗任意文本。",
+      "constructor": {
+        "type": "object",
+        "properties": {
+          "config": { "$ref": "#/modules/TextCleaningConfig" }
+        }
+      },
+      "methods": {
+        "clean": {
+          "description": "执行完整清洗流程，返回清洗结果及操作记录。",
+          "input": {
+            "type": "object",
+            "required": ["rawText"],
+            "properties": {
+              "rawText": { "type": "string", "description": "ASR 原始输出文本（可能包含 SenseVoice 标签）" }
+            }
+          },
+          "output": { "$ref": "#/modules/CleaningResult" }
+        },
+        "cleanQuick": {
+          "description": "快速清洗，只返回清洗后的文本字符串。",
+          "input": {
+            "type": "object",
+            "required": ["rawText"],
+            "properties": {
+              "rawText": { "type": "string" }
+            }
+          },
+          "output": { "type": "string", "description": "清洗后的纯文本" }
+        }
+      }
+    },
+
+    "cleanText": {
+      "description": "便捷函数：直接对文本进行清洗，返回清洗后的字符串。",
+      "type": "function",
+      "input": {
+        "type": "object",
+        "required": ["rawText"],
+        "properties": {
+          "rawText": { "type": "string" },
+          "config": { "$ref": "#/modules/TextCleaningConfig" }
+        }
+      },
+      "output": { "type": "string" }
+    },
+
+    "CleaningResult": {
+      "description": "文本清洗完整结果（包含操作记录用于审计）。",
+      "type": "object",
+      "required": ["text", "operations"],
+      "properties": {
+        "text": { "type": "string", "description": "清洗后的文本" },
+        "operations": {
+          "type": "array",
+          "description": "所有清洗操作记录（可用于调试和审计）",
+          "items": { "$ref": "#/modules/CleaningOperation" }
+        }
+      }
+    },
+
+    "CleaningOperation": {
+      "type": "object",
+      "required": ["name", "description", "before", "after"],
+      "properties": {
+        "name": { "type": "string", "description": "操作名称，如 remove_filler / format_number / add_punctuation" },
+        "description": { "type": "string", "description": "操作中文描述" },
+        "before": { "type": "string", "description": "操作前的文本" },
+        "after": { "type": "string", "description": "操作后的文本" }
+      }
+    },
+
+    "======================== 配置接口 ========================": {},
+
+    "OnlineASRConfig": {
+      "description": "Sherpa-ONNX 在线识别引擎配置。映射到 sherpa-onnx 的 OnlineRecognizerConfig。",
+      "type": "object",
+      "required": ["encoderModel", "decoderModel", "joinerModel", "tokens", "modelType"],
+      "properties": {
+        "encoderModel": { "type": "string", "description": "编码器 ONNX 模型路径（必填）" },
+        "decoderModel": { "type": "string", "description": "解码器 ONNX 模型路径（必填）" },
+        "joinerModel": { "type": "string", "description": "Joiner ONNX 模型路径（必填）" },
+        "tokens": { "type": "string", "description": "tokens.txt 词汇文件路径（必填）" },
+        "modelType": { "type": "string", "enum": ["sense_voice", "zipformer2", "paraformer"], "description": "模型架构类型" },
+        "enableITN": { "type": "boolean", "default": true, "description": "是否启用反向文本正则化" },
+        "samplingRate": { "type": "integer", "default": 16000, "description": "音频采样率（Hz）" },
+        "featureDim": { "type": "integer", "default": 80, "description": "特征维度" },
+        "decodingMethod": { "type": "string", "enum": ["greedy", "modified_beam_search"], "default": "greedy" },
+        "maxActivePaths": { "type": "integer", "default": 4, "description": "最大活跃路径数" },
+        "endpointSilenceThresholdMs": { "type": "integer", "default": 1500, "description": "端点检测静音阈值（毫秒）" }
+      }
+    },
+
+    "EndpointConfig": {
+      "type": "object",
+      "properties": {
+        "rule1MustContainSilence": { "type": "boolean", "default": true },
+        "rule1SilenceDurationS": { "type": "number", "default": 2.4, "description": "规则1：超过此时间（秒）无语音则结束一段" },
+        "rule2MustContainSilence": { "type": "boolean", "default": true },
+        "rule2SilenceDurationS": { "type": "number", "default": 1.2 },
+        "rule2MinTrailingSilence": { "type": "number", "default": 2.4 }
+      }
+    },
+
+    "DiarizationConfig": {
+      "type": "object",
+      "properties": {
+        "engine": { "type": "string", "enum": ["sherpa-onnx", "pyannote"], "default": "sherpa-onnx" },
+        "embeddingModel": { "type": "string", "description": "说话人嵌入模型 ONNX 文件路径" },
+        "minSpeakers": { "type": "integer", "default": 1, "minimum": 1 },
+        "maxSpeakers": { "type": "integer", "default": 5, "minimum": 1, "maximum": 20 },
+        "clusteringThreshold": { "type": "number", "default": 0.55, "minimum": 0, "maximum": 1, "description": "余弦相似度聚类阈值" }
+      }
+    },
+
+    "TextCleaningConfig": {
+      "type": "object",
+      "properties": {
+        "enablePunctuation": { "type": "boolean", "default": true, "description": "是否启用标点补全" },
+        "enableFillerFilter": { "type": "boolean", "default": true, "description": "是否启用语气词过滤" },
+        "enableNumberFormat": { "type": "boolean", "default": true, "description": "是否启用数字格式化" },
+        "customFillers": { "type": "array", "items": { "type": "string" }, "description": "自定义语气词列表（覆盖默认）" },
+        "punctuationModelPath": { "type": "string", "description": "标点补全模型路径（可选，不用模型则用规则补全）" }
+      }
+    },
+
+    "AudioInputConfig": {
+      "type": "object",
+      "properties": {
+        "targetSampleRate": { "type": "integer", "default": 16000 },
+        "channels": { "type": "integer", "default": 1, "description": "声道数，模型通常需要单声道" },
+        "format": { "type": "string", "enum": ["wav", "pcm", "mp3", "auto"], "default": "auto" },
+        "autoConvert": { "type": "boolean", "default": true, "description": "非标准格式是否自动转码" }
+      }
+    }
+
+  },
+
+  "======================== 音频编码规范 ========================": {
+    "description": "所有模块内部统一使用以下编码格式。外部输入会由 loadAudioFile / loadWavFile / transcodeWithFFmpeg 自动转换。"
+  },
+
+  "audioSpec": {
+    "pcmFormat": {
+      "internalEncoding": {
+        "sampleRate": 16000,
+        "sampleRateUnit": "Hz",
+        "channels": 1,
+        "channelMode": "mono（单声道）",
+        "sampleFormat": "float32",
+        "sampleRange": "[-1.0, 1.0]（有符号归一化）",
+        "byteOrder": "little-endian（小端序）"
+      },
+      "inputFormat_accepted": {
+        "wav": {
+          "description": "标准 WAV 文件。支持 16-bit PCM 和 32-bit float PCM。多声道自动取第1个声道。",
+          "bitsPerSample": [16, 32],
+          "sampleRate": "任意，自动重采样至 16000",
+          "channels": "任意，自动取单声道"
+        },
+        "pcm": {
+          "description": "原始 PCM 文件。必须为 16kHz / 16bit / 单声道 / 小端序 s16le。",
+          "bitsPerSample": 16,
+          "sampleRate": 16000,
+          "channels": 1,
+          "endianness": "little-endian"
+        },
+        "mp3": {
+          "description": "通过 ffmpeg 自动转码（系统需安装 ffmpeg）。"
+        },
+        "m4a": {
+          "description": "通过 ffmpeg 自动转码（系统需安装 ffmpeg）。"
+        },
+        "opus": {
+          "description": "通过 ffmpeg 自动转码（系统需安装 ffmpeg）。"
+        },
+        "aac": {
+          "description": "通过 ffmpeg 自动转码（系统需安装 ffmpeg）。"
+        },
+        "ogg": {
+          "description": "通过 ffmpeg 自动转码（系统需安装 ffmpeg）。"
+        }
+      }
+    },
+
+    "ffmpegTranscodeCommand": {
+      "description": "内部调用的 ffmpeg 命令模板。输出 16kHz/单声道/s16le PCM 到 stdout。",
+      "command": "ffmpeg -y -i \"${inputFilePath}\" -ar 16000 -ac 1 -f s16le -",
+      "note": "s16le 输出后由 Node.js 读取为 Buffer，再归一化转为 float32[-1,1]"
+    },
+
+    "streamingChunking": {
+      "description": "流式解码模式下，feed() 方法每次接收的 PCM 分片建议。",
+      "chunkSize_samples": "160 ~ 1600 个采样点（10ms ~ 100ms 音频）",
+      "chunkSize_bytes": "640 ~ 6400 字节（s16le 格式）",
+      "recommended_ms": 30,
+      "recommended_samples": 480,
+      "rationale": "过小增加解码开销，过大增加延迟。30ms 是实时 ASR 的常见折衷。"
+    },
+
+    "sampleCount_to_seconds": {
+      "description": "时间戳计算方式：start/end = sampleCount / 16000。",
+      "formula": "seconds = samples / 16000"
+    }
+  },
+
+  "======================== 模型文件布局 ========================": {
+    "description": "模型文件统一放在项目根目录 models/ 下。通过环境变量 MODEL_ROOT 可覆盖。"
+  },
+
+  "modelLayout": {
+    "sense-voice-int8": {
+      "encoder": "models/sense-voice-int8/sense-voice-encoder.int8.onnx",
+      "decoder": "models/sense-voice-int8/sense-voice-decoder.onnx",
+      "joiner": "models/sense-voice-int8/sense-voice-joiner.onnx",
+      "tokens": "models/sense-voice-int8/tokens.txt",
+      "source": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models"
+    },
+    "speaker-embedding": {
+      "model": "models/speaker-embedding/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+      "source": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models"
+    },
+    "punctuation-optional": {
+      "model": "models/punctuation/ (CT-Transformer, 可选)",
+      "source": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models"
+    }
+  },
+
+  "======================== 外部依赖 ========================": {
+    "mandatory": {
+      "sherpa-onnx": "npm install sherpa-onnx（社区预编译版本，封装了 SenseVoice 和 3D-Speaker 推理）"
+    },
+    "optional": {
+      "ffmpeg": "系统安装，用于非 WAV 格式音频转码。如无可只使用 WAV 输入。",
+      "python + pyannote.audio": "备选说话人分离引擎。配置 diarization.engine='pyannote' 时使用。"
+    }
+  }
+}

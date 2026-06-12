@@ -1,0 +1,109 @@
+# =====================
+# 依赖包
+# =====================
+node_modules/
+.packages/
+pubspec.lock
+Podfile.lock
+
+# =====================
+# 编译产物
+# =====================
+build/
+dist/
+out/
+*.exe
+*.app
+*.apk
+*.aab
+*.ipa
+*.dmg
+*.pkg
+
+# Flutter
+.metadata
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Electron
+electron-builder.yml
+
+# =====================
+# 密钥与私密配置 (绝对不要提交)
+# =====================
+config/*.txt
+config/*.json
+config/*.pem
+# 保留示例文件
+!config/README.md
+!config/*.example.*
+
+# =====================
+# 模型文件 (通常很大，单独存储或使用 LFS)
+# =====================
+models/*.onnx
+models/*.bin
+models/*.pt
+models/*.pth
+models/*.h5
+
+# =====================
+# 音频缓存与本地数据库
+# =====================
+*.wav
+*.pcm
+*.mp3
+*.aac
+*.m4a
+*.opus
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# =====================
+# 日志与临时文件
+# =====================
+*.log
+logs/
+*.tmp
+*.temp
+*.cache
+
+# =====================
+# IDE 与编辑器
+# =====================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# =====================
+# 操作系统
+# =====================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# =====================
+# 测试覆盖报告
+# =====================
+coverage/
+.nyc_output/
+
+# =====================
+# 环境变量文件 (可能包含密钥)
+# =====================
+.env
+.env.local
+.env.development
+.env.production
+
+# Python
+__pycache__/
+*.pyc

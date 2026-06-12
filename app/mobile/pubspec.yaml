@@ -1,0 +1,49 @@
+name: ai_voice_assistant_mobile
+description: "AI 智能录音助手 - 移动端音频采集与 VAD 模块"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.2.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # =====================
+  # 权限管理
+  # =====================
+  permission_handler: ^11.3.0
+
+  # =====================
+  # 前台保活 + 通知栏
+  # =====================
+  flutter_foreground_task: ^8.12.0
+  flutter_local_notifications: ^17.2.0
+
+  # =====================
+  # 音频采集
+  # =====================
+  record: ^5.1.2          # 麦克风音频流采集
+
+  # =====================
+  # ONNX 推理引擎 (Silero VAD)
+  # =====================
+  onnxruntime_flutter: ^1.0.4
+
+  # =====================
+  # 序列化 / 工具
+  # =====================
+  synchronized: ^3.1.0    # 异步锁，防止竞态
+  logging: ^1.2.0         # 日志输出
+  path_provider: ^2.1.2   # 获取应用目录
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/models/      # Silero VAD ONNX 模型文件
