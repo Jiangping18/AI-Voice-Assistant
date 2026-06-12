@@ -1,0 +1,875 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "智能体6 — 智能提醒与触达 接口规范",
+  "version": "1.0.0",
+  "description": "PC端(Python)与移动端(Flutter)双向提醒调度服务的全部对外接口定义。包含：上下行消息格式、Python 类方法签名、Flutter 类方法签名、通知渠道配置。",
+
+  "definitions": {
+
+    "common": {
+      "description": "PC↔移动端 通信层（通过智能体2 CommEngine 的 ControlChannel 传输）",
+
+      "PC_to_Mobile_ReminderPush": {
+        "title": "PC → 移动端：推送待办提醒",
+        "type": "object",
+        "required": ["type", "payload"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["reminder"],
+            "description": "消息类型，固定为 reminder"
+          },
+          "payload": {
+            "type": "object",
+            "required": ["id", "content", "deadline"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "待办唯一标识，由 PC 端 Reminder 模型自动生成"
+              },
+              "content": {
+                "type": "string",
+                "minLength": 1,
+                "description": "待办内容文本，若 assignee 非空则自动添加前缀 [assignee]"
+              },
+              "deadline": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+                "description": "截止时间，ISO 8601 格式，支持 Z 后缀和时区偏移"
+              },
+              "lead_minutes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1440,
+                "default": 0,
+                "description": "提前提醒分钟数，0 表示到截止时间才提醒"
+              },
+              "assignee": {
+                "type": "string",
+                "default": "",
+                "description": "负责人姓名（可选），用于通知标题前缀"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "type": "reminder",
+          "payload": {
+            "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "content": "下午三点和客户开会",
+            "deadline": "2026-06-15T14:00:00+08:00",
+            "lead_minutes": 15,
+            "assignee": "张三"
+          }
+        }
+      },
+
+      "Mobile_to_PC_StatusReport": {
+        "title": "移动端 → PC：状态变更上报",
+        "type": "object",
+        "required": ["type", "payload"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["reminder_status"],
+            "description": "消息类型，固定为 reminder_status"
+          },
+          "payload": {
+            "type": "object",
+            "required": ["id", "status"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "待办唯一标识"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["completed", "cancelled"],
+                "description": "变更后的状态"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "type": "reminder_status",
+          "payload": {
+            "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "status": "completed"
+          }
+        }
+      }
+    },
+
+    "pc": {
+      "description": "PC 端 Python 接口（app/desktop/main/services/reminder/）",
+
+      "scheduleReminders_Input": {
+        "title": "scheduleReminders 入参",
+        "description": "接收智能体4（语义分析）输出的 reminders 列表，统一入口。accepts AnalysisResult 对象或 dict。",
+        "type": "object",
+        "properties": {
+          "analysis_result": {
+            "description": "智能体4的 AnalysisResult 对象（含 .reminders 属性），或 dict（含 reminders 键）",
+            "oneOf": [
+              { "$ref": "#/definitions/analysis/analysis_result" },
+              { "$ref": "#/definitions/pc/AnalysisResultDict" }
+            ]
+          },
+          "service": {
+            "type": "object",
+            "description": "ReminderService 实例（可选，默认使用全局单例）"
+          },
+          "scheduler": {
+            "type": "object",
+            "description": "ReminderScheduler 实例（可选，默认使用全局单例）"
+          }
+        },
+        "required": ["analysis_result"]
+      },
+
+      "scheduleReminders_Output": {
+        "title": "scheduleReminders 返回值",
+        "type": "object",
+        "required": ["total", "accepted", "rejected", "errors", "reminder_ids"],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "输入的 reminders 总数"
+          },
+          "accepted": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "校验通过的待办数"
+          },
+          "rejected": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "校验拒绝的待办数"
+          },
+          "errors": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "拒绝原因的文本列表，格式 '第N条: 原因'"
+          },
+          "reminder_ids": {
+            "type": "array",
+            "items": { "type": "string", "format": "uuid" },
+            "description": "入库成功的待办 ID 列表"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "total": 3,
+          "accepted": 2,
+          "rejected": 1,
+          "errors": ["第2条: deadline 是过去时间"],
+          "reminder_ids": ["uuid-1111", "uuid-2222"]
+        }
+      },
+
+      "AnalysisResultDict": {
+        "title": "dict 格式的 AnalysisResult",
+        "description": "当以纯 dict 调用 scheduleReminders / schedule_from_analysis 时的格式",
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "对话摘要（可选，scheduleReminders 忽略此字段）"
+          },
+          "reminders": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/pc/ReminderInputItem" },
+            "description": "待办事项列表"
+          }
+        },
+        "required": ["reminders"]
+      },
+
+      "ReminderInputItem": {
+        "title": "智能体4输出的单条待办格式",
+        "description": "由 AnalysisResult.reminders[] 或 ReminderService._validate_and_build 接收",
+        "type": "object",
+        "required": ["content", "deadline"],
+        "properties": {
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "description": "待办内容，不能为空或纯空白字符"
+          },
+          "assignee": {
+            "type": "string",
+            "description": "负责人（可选），非空时自动添加 [assignee] 前缀到 title"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+            "description": "截止时间（ISO 8601），必须为未来时间"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 1.0,
+            "description": "语义分析置信度，用于自动映射优先级：[0.8,1]=5级, [0.6,0.8)=4级, [0.3,0.6)=3级, [0,0.3)=2级"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "content": "下午三点和客户开会",
+          "assignee": "张三",
+          "deadline": "2026-06-15T14:00:00+08:00",
+          "confidence": 0.85
+        }
+      },
+
+      "add_reminder": {
+        "title": "ReminderService.add_reminder()",
+        "description": "直接添加一条待办，绕过智能体4的分析结果流程。可由 UI 或其他服务调用。",
+        "type": "object",
+        "required": ["content", "deadline"],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "待办内容"
+          },
+          "deadline": {
+            "type": "string",
+            "description": "截止时间（ISO 8601），必须为未来时间"
+          },
+          "assignee": {
+            "type": "string",
+            "default": "",
+            "description": "负责人（可选）"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "default": 3,
+            "description": "优先级 1-5"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "关联事件 ID（可选，关联到 events 表）"
+          }
+        },
+        "additionalProperties": false,
+        "returns": {
+          "type": "string",
+          "format": "uuid",
+          "description": "新创建的待办 ID"
+        }
+      },
+
+      "ReminderService_PublicAPI": {
+        "title": "ReminderService 公共方法",
+        "type": "object",
+        "properties": {
+          "schedule_from_analysis": {
+            "type": "object",
+            "description": "解析 AnalysisResult.reminders 并入库。返回 {total, accepted, rejected, errors, reminder_ids}",
+            "input": { "$ref": "#/definitions/pc/scheduleReminders_Input" },
+            "output": { "$ref": "#/definitions/pc/scheduleReminders_Output" }
+          },
+          "add_reminder": { "$ref": "#/definitions/pc/add_reminder" },
+          "get_pending_reminders": {
+            "description": "获取所有待触发待办。参数: limit=50 → list[Reminder]"
+          },
+          "get_upcoming_reminders": {
+            "description": "获取指定时间内即将到期的待办。参数: minutes=60, limit=50 → list[Reminder]"
+          },
+          "get_reminder_by_id": {
+            "description": "按 ID 查询。参数: reminder_id → Optional[Reminder]"
+          }
+        }
+      },
+
+      "ReminderScheduler_PublicAPI": {
+        "title": "ReminderScheduler 公共方法",
+        "description": "基于 APScheduler + 轮询兜底的定时调度器。依赖 APScheduler（可选），无安装时降级为纯轮询模式。",
+        "constructor": {
+          "type": "object",
+          "properties": {
+            "push_service": {
+              "type": "object",
+              "description": "NotificationPushService 实例（可选，用于推送通知）"
+            },
+            "lead_times": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1, "maximum": 1440 },
+              "default": [15, 30, 60],
+              "description": "提前提醒分钟数列表，每个值注册一个独立的 DateTrigger"
+            },
+            "poll_interval": {
+              "type": "integer",
+              "minimum": 10,
+              "default": 60,
+              "description": "轮询兜底间隔（秒）"
+            }
+          }
+        },
+        "methods": {
+          "start": {
+            "description": "启动调度器：注册所有 pending 待办的 DateTrigger + 启动轮询线程"
+          },
+          "stop": {
+            "description": "停止调度器：取消所有 APScheduler job + 停止轮询线程"
+          },
+          "schedule_reminder": {
+            "description": "为单条待办注册提前提醒触发器。参数: reminder_id, due_time_str（ISO 8601）"
+          },
+          "cancel_schedule": {
+            "description": "取消单条待办的所有触发器。参数: reminder_id"
+          },
+          "reschedule_all": {
+            "description": "重新注册所有 pending 待办（启动时及每日汇总后调用）"
+          },
+          "set_lead_times": {
+            "description": "更新提前提醒时间列表（下次启动生效）。参数: lead_times: list[int]"
+          }
+        },
+        "properties": {
+          "is_running": {
+            "type": "boolean",
+            "description": "调度器运行状态"
+          },
+          "registered_count": {
+            "type": "integer",
+            "description": "已注册的待办数量"
+          }
+        }
+      },
+
+      "NotificationPushService_PublicAPI": {
+        "title": "NotificationPushService 公共方法",
+        "description": "通知推送服务。通过策略模式注入 send_fn，不直接依赖 CommEngine。",
+        "constructor": {
+          "type": "object",
+          "properties": {
+            "send_fn": {
+              "type": "object",
+              "description": "推送回调，签名: (ReminderPushPayload) -> bool。由应用层注入（如通过 CommEngine.sendControl）"
+            },
+            "on_status_change": {
+              "type": "object",
+              "description": "手机端状态变更回调，签名: (ReminderStatusReport) -> None"
+            }
+          }
+        },
+        "methods": {
+          "set_send_fn": {
+            "description": "设置/更换发送回调。参数: send_fn: SendReminderFn"
+          },
+          "set_on_status_change": {
+            "description": "设置/更换状态变更回调。参数: callback: OnStatusChangeFn"
+          },
+          "push": {
+            "description": "推送一条提醒到手机端。参数: payload: ReminderPushPayload → bool",
+            "input": { "$ref": "#/definitions/pc/ReminderPushPayload" }
+          },
+          "handle_status_report": {
+            "description": "接收处理手机端上报的状态变更。参数: raw: dict（同上行消息格式）→ bool"
+          },
+          "enqueue_offline": {
+            "description": "将推送加入离线队列。参数: payload: ReminderPushPayload"
+          },
+          "flush_offline_queue": {
+            "description": "重连后批量补推离线消息。返回补推成功数: int"
+          }
+        },
+        "properties": {
+          "offline_queue_size": {
+            "type": "integer",
+            "description": "离线队列长度"
+          }
+        }
+      },
+
+      "ReminderPushPayload": {
+        "title": "ReminderPushPayload 数据类（Python dataclass）",
+        "type": "object",
+        "required": ["id", "content", "deadline"],
+        "properties": {
+          "id": { "type": "string" },
+          "content": { "type": "string" },
+          "deadline": { "type": "string", "format": "date-time" },
+          "lead_minutes": { "type": "integer", "default": 0 },
+          "assignee": { "type": "string", "default": "" }
+        }
+      },
+
+      "ReminderStatusReport": {
+        "title": "ReminderStatusReport 数据类（Python dataclass）",
+        "type": "object",
+        "required": ["id", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string", "enum": ["completed", "cancelled"] }
+        }
+      },
+
+      "ReminderStateManager_PublicAPI": {
+        "title": "ReminderStateManager 公共方法",
+        "description": "待办状态管理器：状态变更、过期归档、每日汇总。",
+        "constructor": {
+          "type": "object",
+          "properties": {
+            "push_service": {
+              "type": "object",
+              "description": "NotificationPushService 实例（可选，用于状态变更双向同步）"
+            }
+          }
+        },
+        "methods": {
+          "mark_completed": {
+            "description": "标记待办为已完成。参数: reminder_id → bool。自动触发 _sync_to_mobile"
+          },
+          "mark_cancelled": {
+            "description": "标记待办为已取消。参数: reminder_id → bool。自动触发 _sync_to_mobile"
+          },
+          "mark_dismissed": {
+            "description": "标记待办为已忽略。参数: reminder_id → bool"
+          },
+          "handle_status_report": {
+            "description": "处理手机端上报的状态变更。参数: report: ReminderStatusReport → bool。委托给 mark_completed/mark_cancelled"
+          },
+          "archive_overdue": {
+            "description": "过期归档：将所有已过期且仍为 pending 的待办标记为 expired。返回归档数量: int"
+          },
+          "get_archived": {
+            "description": "获取已归档的待办。参数: since_days=7, limit=100 → list[Reminder]"
+          },
+          "generate_daily_summary": {
+            "description": "生成每日待办汇总统计。返回 dict",
+            "output": { "$ref": "#/definitions/pc/DailySummaryOutput" }
+          }
+        }
+      },
+
+      "DailySummaryOutput": {
+        "title": "generate_daily_summary 返回值格式",
+        "type": "object",
+        "required": ["date", "pending", "completed_today", "cancelled_today", "overdue", "total", "items"],
+        "properties": {
+          "date": { "type": "string", "format": "date", "description": "汇总日期，YYYY-MM-DD 格式" },
+          "pending": { "type": "integer", "description": "待处理数量" },
+          "completed_today": { "type": "integer", "description": "今日完成数量" },
+          "cancelled_today": { "type": "integer", "description": "今日取消数量" },
+          "overdue": { "type": "integer", "description": "已过期待办数量" },
+          "total": { "type": "integer", "description": "待办总数" },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "title": { "type": "string" },
+                "content": { "type": "string" },
+                "due_time": { "type": "string" },
+                "status": { "type": "string", "enum": ["pending", "triggered", "completed", "cancelled", "expired", "dismissed"] },
+                "priority": { "type": "integer", "minimum": 1, "maximum": 5 }
+              }
+            }
+          }
+        }
+      },
+
+      "start_scheduler": {
+        "title": "start_scheduler() 便捷函数",
+        "description": "启动全局调度器（使用模块级单例）。参数: lead_times: list[int]（可选）"
+      },
+      "stop_scheduler": {
+        "title": "stop_scheduler() 便捷函数",
+        "description": "停止全局调度器"
+      },
+      "get_daily_summary": {
+        "title": "get_daily_summary() 便捷函数",
+        "description": "获取每日待办汇总"
+      },
+      "archive_overdue": {
+        "title": "archive_overdue() 便捷函数",
+        "description": "归档过期待办，返回归档数量"
+      }
+    },
+
+    "mobile": {
+      "description": "移动端 Flutter/Dart 接口（app/mobile/lib/services/reminder/）",
+
+      "ReminderItem": {
+        "title": "ReminderItem 数据类（Dart）",
+        "type": "object",
+        "required": ["id", "content", "deadline"],
+        "properties": {
+          "id": { "type": "string", "description": "待办唯一标识" },
+          "content": { "type": "string", "description": "待办内容" },
+          "deadline": { "type": "string", "format": "date-time", "description": "截止时间 ISO 8601" },
+          "leadMinutes": { "type": "integer", "default": 0, "description": "提前提醒分钟数" },
+          "assignee": { "type": "string", "default": "", "description": "负责人" },
+          "status": { "type": "string", "enum": ["pending", "triggered", "completed", "cancelled"], "default": "pending", "description": "当前状态" }
+        },
+        "methods": {
+          "ReminderItem.fromJson": {
+            "description": "工厂构造。接受 Map<String, dynamic>，缺失字段自动用默认值填充",
+            "input": { "type": "object" }
+          },
+          ".toJson": {
+            "description": "序列化为 Map<String, dynamic>",
+            "output": { "type": "object" }
+          }
+        }
+      },
+
+      "mobile_ReminderService": {
+        "title": "ReminderService（Flutter 侧）公共接口",
+        "description": "移动端提醒调度主服务。接收 PC 推送、本地 Timer 调度、系统通知展示、状态变更上报。",
+        "callbacks": {
+          "onStatusChanged": {
+            "type": "object",
+            "signature": "void Function(String id, String status)",
+            "description": "状态变更回调。当手机端标记完成/取消时触发，由应用层注入（通常委托给 ReminderStateSync.reportStatus）"
+          },
+          "onNotificationTapped": {
+            "type": "object",
+            "signature": "void Function(String reminderId)",
+            "description": "通知点击回调。用户点击系统通知时触发，用于跳转到待办详情页"
+          }
+        },
+        "methods": {
+          "init": {
+            "description": "初始化：注册通知渠道、设置通知点击响应处理器",
+            "async": true
+          },
+          "receiveReminder": {
+            "description": "接收单条 PC 推送的待办。参数: payload: Map<String, dynamic>（同下行消息 payload 字段）。自动去重 + 注册本地 Timer",
+            "input": { "type": "object" }
+          },
+          "receiveReminderList": {
+            "description": "批量接收待办。参数: payloads: List<Map<String, dynamic>>。启动时同步用"
+          },
+          "markCompleted": {
+            "description": "标记待办完成。取消本地 Timer + 取消系统通知 + 触发 onStatusChanged('completed')"
+          },
+          "markCancelled": {
+            "description": "标记待办取消。取消本地 Timer + 取消系统通知 + 触发 onStatusChanged('cancelled')"
+          },
+          "dispose": {
+            "description": "释放所有 Timer"
+          }
+        },
+        "properties": {
+          "reminders": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/mobile/ReminderItem" },
+            "description": "所有待办（只读副本）"
+          },
+          "pendingReminders": {
+            "type": "array",
+            "description": "待触发的待办列表（status == 'pending'）"
+          },
+          "triggeredReminders": {
+            "type": "array",
+            "description": "已触发的待办列表（status == 'triggered'）"
+          }
+        }
+      },
+
+      "NotificationHandler": {
+        "title": "NotificationHandler 公共接口",
+        "description": "系统通知触达处理器：权限、点击跳转、TTS 语音播报。",
+        "callbacks": {
+          "ttsSpeak": {
+            "type": "object",
+            "signature": "void Function(String text)",
+            "description": "TTS 播报回调。由应用层注入（配合 flutter_tts 插件使用）"
+          }
+        },
+        "methods": {
+          "requestPermission": {
+            "description": "请求通知权限。Android 13+ 请求 POST_NOTIFICATIONS；iOS 通过 UNUserNotificationCenter。返回 NotificationPermissionState",
+            "async": true
+          },
+          "checkPermission": {
+            "description": "检查当前通知权限状态。返回 NotificationPermissionState",
+            "async": true
+          },
+          "openSettings": {
+            "description": "打开应用权限设置页。返回 bool 表示是否成功打开",
+            "async": true
+          },
+          "setDetailRoute": {
+            "description": "设置通知点击跳转路由。参数: route: String"
+          },
+          "handleNotificationTap": {
+            "description": "处理通知点击事件。参数: reminderId → String?（返回跳转路由）"
+          },
+          "setTtsEnabled": {
+            "description": "启用/关闭 TTS 语音播报。参数: enabled: bool"
+          },
+          "speakReminder": {
+            "description": "TTS 播报提醒内容。参数: content, {assignee}。仅 ttsEnabled=true 且 ttsSpeak 已注入时生效",
+            "async": true
+          }
+        },
+        "properties": {
+          "isGranted": { "type": "boolean", "description": "通知权限是否已授予" },
+          "ttsEnabled": { "type": "boolean", "description": "TTS 是否启用" },
+          "lastTappedReminderId": { "type": ["string", "null"], "description": "最后点击的提醒 ID" }
+        }
+      },
+
+      "NotificationPermissionState": {
+        "title": "NotificationPermissionState 枚举",
+        "type": "string",
+        "enum": ["granted", "denied", "permanentlyDenied", "notRequested"]
+      },
+
+      "ReminderStateSync": {
+        "title": "ReminderStateSync 公共接口",
+        "description": "待办状态变更双向同步服务。离线缓存 + 自动重试补报。",
+        "callbacks": {
+          "sendStatusUpdate": {
+            "type": "object",
+            "signature": "bool Function(String reminderId, String status)",
+            "description": "发送状态变更到 PC。由应用层注入（通过 CommEngine.sendControl）。返回 bool 表示发送是否成功"
+          }
+        },
+        "methods": {
+          "reportStatus": {
+            "description": "上报一条状态变更到 PC。发送成功返回 true；失败自动入队等待重试。参数: reminderId, status → bool"
+          },
+          "flushPending": {
+            "description": "尝试补报所有待上报的变更。返回成功上报的数量: int"
+          },
+          "startAutoRetry": {
+            "description": "启动自动补报（周期性 Timer）。参数: interval=Duration(seconds:30)"
+          },
+          "stopAutoRetry": {
+            "description": "停止自动补报 Timer"
+          },
+          "clearPending": {
+            "description": "清空待上报队列"
+          },
+          "dispose": {
+            "description": "释放资源：停止自动补报、清空队列"
+          }
+        },
+        "properties": {
+          "pendingCount": { "type": "integer", "description": "待上报队列长度" },
+          "hasPending": { "type": "boolean", "description": "是否有待上报的变更" }
+        }
+      },
+
+      "StatusChangeEvent": {
+        "title": "StatusChangeEvent 数据类（Dart）",
+        "description": "状态变更事件记录，用于离线队列",
+        "type": "object",
+        "required": ["reminderId", "status"],
+        "properties": {
+          "reminderId": { "type": "string" },
+          "status": { "type": "string", "enum": ["completed", "cancelled"] },
+          "timestamp": { "type": "string", "format": "date-time", "description": "变更时间，默认 DateTime.now()" }
+        }
+      }
+    },
+
+    "notifications": {
+      "description": "系统通知渠道配置",
+
+      "Android_NotificationChannel": {
+        "title": "Android 通知渠道参数",
+        "type": "object",
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "const": "ai_reminder_channel",
+            "description": "通知渠道 ID"
+          },
+          "channel_name": {
+            "type": "string",
+            "const": "待办提醒",
+            "description": "通知渠道名称"
+          },
+          "channel_description": {
+            "type": "string",
+            "const": "接收待办事项提醒通知",
+            "description": "通知渠道描述"
+          },
+          "importance": {
+            "type": "string",
+            "const": "high",
+            "description": "通知重要性，高优先级确保弹窗"
+          },
+          "priority": {
+            "type": "string",
+            "const": "high",
+            "description": "通知优先级"
+          },
+          "play_sound": {
+            "type": "boolean",
+            "const": true
+          },
+          "enable_vibration": {
+            "type": "boolean",
+            "const": true
+          },
+          "full_screen_intent": {
+            "type": "boolean",
+            "const": true,
+            "description": "锁屏时全屏显示"
+          },
+          "category": {
+            "type": "string",
+            "const": "alarm",
+            "description": "通知类别：alarm"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string", "enum": ["complete", "cancel"] },
+                "label": { "type": "string", "enum": ["完成", "取消"] },
+                "shows_user_interface": { "type": "boolean", "const": false }
+              }
+            },
+            "description": "通知按钮操作：完成 + 取消"
+          }
+        },
+        "required": ["channel_id", "channel_name"]
+      },
+
+      "iOS_NotificationSettings": {
+        "title": "iOS 通知配置参数",
+        "type": "object",
+        "properties": {
+          "present_alert": { "type": "boolean", "const": true },
+          "present_badge": { "type": "boolean", "const": true },
+          "present_sound": { "type": "boolean", "const": true },
+          "category_identifier": {
+            "type": "string",
+            "const": "reminder_category",
+            "description": "通知类别标识"
+          }
+        }
+      },
+
+      "Notification_Payload": {
+        "title": "系统通知 payload 格式",
+        "description": "通知点击时回传给应用的 JSON payload",
+        "type": "object",
+        "required": ["id", "action"],
+        "properties": {
+          "id": { "type": "string", "description": "待办 ID" },
+          "action": { "type": "string", "enum": ["open"], "description": "动作类型，固定为 open" }
+        },
+        "example": {
+          "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "action": "open"
+        }
+      },
+
+      "Notification_ID_Range": {
+        "title": "通知 ID 范围",
+        "description": "通知 ID 计算规则：notifIdBase(2000) + hashCode(reminderId) % 10000，确保与前台服务通知(1001)不冲突。范围: 2000-11999"
+      }
+    },
+
+    "analysis": {
+      "description": "与智能体4（语义分析）的接口交互格式",
+
+      "analysis_result": {
+        "title": "AnalysisResult（智能体4输出）",
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string", "description": "对话摘要" },
+          "emotion": { "type": "object" },
+          "entities": { "type": "object" },
+          "reminders": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/pc/ReminderInputItem" },
+            "description": "待办事项列表（智能体6关注的字段）"
+          },
+          "raw_response": { "type": "string", "description": "API 原始响应（仅调试用）" }
+        }
+      }
+    }
+  },
+
+  "all_interfaces": {
+    "title": "接口总览",
+
+    "数据流": [
+      {
+        "方向": "智能体4 → 智能体6",
+        "接口": "scheduleReminders(analysis_result)",
+        "格式": "AnalysisResult.reminders[]",
+        "传输方式": "Python 函数调用（同进程）"
+      },
+      {
+        "方向": "智能体6 → 智能体5（存储层）",
+        "接口": "ReminderRepository.insert / mark_* / find_*",
+        "格式": "Reminder 数据模型 ↔ SQLite",
+        "传输方式": "Python 函数调用（同进程，DatabaseManager 管理连接）"
+      },
+      {
+        "方向": "PC(智能体6) → 移动端(下行推送)",
+        "接口": "CommEngine.sendControl → reminder payload",
+        "格式": "{\"type\":\"reminder\",\"payload\":{...}}",
+        "传输方式": "WebSocket/TCP（通过智能体2通信层）"
+      },
+      {
+        "方向": "移动端 → PC(上行状态)",
+        "接口": "CommEngine.sendControl → reminder_status payload",
+        "格式": "{\"type\":\"reminder_status\",\"payload\":{...}}",
+        "传输方式": "WebSocket/TCP（通过智能体2通信层）"
+      },
+      {
+        "方向": "移动端 → 系统通知栏",
+        "接口": "flutter_local_notifications.show()",
+        "格式": "Android Notification + iOS UNNotification",
+        "传输方式": "平台原生通知 API"
+      }
+    ],
+
+    "状态机": {
+      "title": "待办状态流转",
+      "states": ["pending", "triggered", "completed", "cancelled", "expired", "dismissed"],
+      "valid_transitions": {
+        "pending": ["triggered", "completed", "cancelled", "expired", "dismissed"],
+        "triggered": ["completed", "cancelled", "expired"],
+        "completed": [],
+        "cancelled": [],
+        "expired": [],
+        "dismissed": []
+      },
+      "trigger_conditions": {
+        "pending → triggered": "调度器轮询发现 due_time 已过，或 APScheduler 触发器到期",
+        "pending → completed": "用户标记完成（PC 或手机端）",
+        "pending → cancelled": "用户标记取消",
+        "pending → expired": "每日过期归档扫描，due_time 已过且仍为 pending",
+        "pending → dismissed": "用户标记忽略（仅 PC 端）",
+        "triggered → completed": "用户标记完成",
+        "triggered → cancelled": "用户标记取消",
+        "triggered → expired": "每日过期归档扫描"
+      }
+    }
+  },
+
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-06-13",
+      "changes": ["初始版本：完整定义 PC/Mobile 全部 14 类对外接口"]
+    }
+  ]
+}

@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes" />
+  <title>知识图谱 - 移动端</title>
+  <!-- ECharts CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      background: #F5F7FA;
+      touch-action: manipulation;
+      -webkit-overflow-scrolling: touch;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* 图谱容器 */
+    #graph-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+
+    /* 加载状态 */
+    #loading-state {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #F5F7FA;
+      z-index: 10;
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid #E8ECF1;
+      border-top-color: #1890FF;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #loading-state p {
+      margin-top: 12px;
+      font-size: 14px;
+      color: #999;
+    }
+
+    /* 错误状态 */
+    #error-state {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #F5F7FA;
+      z-index: 10;
+      gap: 12px;
+      padding: 32px;
+      text-align: center;
+    }
+
+    #error-state .icon { font-size: 48px; }
+    #error-state h3 { font-size: 16px; color: #333; }
+    #error-state p { font-size: 13px; color: #999; }
+    #error-state button {
+      padding: 8px 24px;
+      border: none;
+      border-radius: 6px;
+      background: #1890FF;
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    /* 顶部信息栏 */
+    #info-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.95);
+      border-bottom: 1px solid #E8ECF1;
+      font-size: 12px;
+      color: #666;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+
+    #info-bar .stats {
+      display: flex;
+      gap: 8px;
+    }
+
+    #info-bar .stats span {
+      color: #999;
+    }
+
+    /* 图例 */
+    #legend {
+      position: absolute;
+      bottom: 16px;
+      left: 12px;
+      right: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 12px;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.92);
+      border-radius: 8px;
+      font-size: 11px;
+      color: #666;
+      z-index: 5;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .legend-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .legend-line {
+      display: inline-block;
+      width: 14px;
+      height: 0;
+      border-top: 2px solid;
+    }
+
+    /* 底部提示 */
+    #hint {
+      position: absolute;
+      bottom: 64px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 16px;
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+      border-radius: 16px;
+      font-size: 11px;
+      z-index: 5;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+    }
+
+    #hint.show { opacity: 1; }
+
+    /* 节点提示框（ECharts tooltip 自定义样式） */
+    .graph-tooltip {
+      background: rgba(255,255,255,0.96) !important;
+      border: none !important;
+      border-radius: 8px !important;
+      padding: 10px 14px !important;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
+      font-size: 13px !important;
+      line-height: 1.6 !important;
+      max-width: 240px !important;
+    }
+  </style>
+</head>
+<body>
+  <!-- ====== 加载状态 ====== -->
+  <div id="loading-state">
+    <div class="spinner"></div>
+    <p>加载知识图谱...</p>
+  </div>
+
+  <!-- ====== 错误状态 ====== -->
+  <div id="error-state">
+    <div class="icon">⚠️</div>
+    <h3>图谱加载失败</h3>
+    <p id="error-message">未知错误</p>
+    <button onclick="location.reload()">重试</button>
+  </div>
+
+  <!-- ====== 信息栏 ====== -->
+  <div id="info-bar">
+    <span>知识图谱</span>
+    <div class="stats">
+      <span id="node-count">0 节点</span>
+      <span>|</span>
+      <span id="edge-count">0 关系</span>
+    </div>
+  </div>
+
+  <!-- ====== 图谱容器 ====== -->
+  <div id="graph-container"></div>
+
+  <!-- ====== 图例 ====== -->
+  <div id="legend">
+    <span class="legend-item">
+      <span class="legend-dot" style="background:#1890FF"></span>人物
+    </span>
+    <span class="legend-item">
+      <span class="legend-dot" style="background:#F5222D;border-radius:2px"></span>事件
+    </span>
+    <span class="legend-item">
+      <span class="legend-dot" style="background:#52C41A"></span>对话
+    </span>
+    <span class="legend-item">
+      <span class="legend-line" style="border-color:#1890FF"></span>参与
+    </span>
+    <span class="legend-item">
+      <span class="legend-line" style="border-color:#722ED1"></span>提及
+    </span>
+    <span class="legend-item">
+      <span class="legend-line" style="border-color:#FA8C16"></span>触发
+    </span>
+  </div>
+
+  <!-- ====== 底部提示 ====== -->
+  <div id="hint">点击节点查看详情 · 双指缩放 · 单指拖动</div>
+
+  <script>
+  // =====================================================
+  // 移动端知识图谱渲染（ECharts Graph）
+  // 限制：≤ 50 个节点，最多两层关系
+  // 适配：触控手势、小屏防重叠
+  // =====================================================
+
+  (function() {
+    'use strict';
+
+    // ---------- 配置 ----------
+    const MAX_NODES = 50;
+    const MAX_DEPTH = 2;
+
+    // 节点颜色
+    const NODE_COLORS = {
+      person: '#1890FF',
+      event: '#F5222D',
+      conversation: '#52C41A',
+    };
+
+    // 边颜色
+    const EDGE_COLORS = {
+      '参与': '#1890FF',
+      '提及': '#722ED1',
+      '触发': '#FA8C16',
+      '相关': '#BFBFBF',
+    };
+
+    // ---------- 工具函数 ----------
+
+    /** 生成两层子图（从随机种子节点开始） */
+    function buildLimitedGraph(fullData) {
+      if (!fullData || !fullData.nodes || fullData.nodes.length === 0) {
+        return { nodes: [], edges: [] };
+      }
+
+      // 优先选择连接度最高的节点作为种子
+      const edgeCount = new Map();
+      fullData.edges.forEach(e => {
+        edgeCount.set(e.source, (edgeCount.get(e.source) || 0) + 1);
+        edgeCount.set(e.target, (edgeCount.get(e.target) || 0) + 1);
+      });
+
+      const sortedNodes = [...fullData.nodes].sort((a, b) => {
+        return (edgeCount.get(b.id) || 0) - (edgeCount.get(a.id) || 0);
+      });
+
+      // 从连接度最高的节点开始 BFS
+      const selected = new Set();
+      const selectedEdges = new Set();
+      let queue = [];
+
+      // 添加种子节点
+      const seedCount = Math.min(3, sortedNodes.length);
+      for (let i = 0; i < seedCount; i++) {
+        if (!selected.has(sortedNodes[i].id)) {
+          selected.add(sortedNodes[i].id);
+          queue.push(sortedNodes[i].id);
+        }
+      }
+
+      if (selected.size === 0) {
+        selected.add(fullData.nodes[0].id);
+        queue.push(fullData.nodes[0].id);
+      }
+
+      // BFS 扩展两层
+      for (let depth = 0; depth < MAX_DEPTH && selected.size < MAX_NODES && queue.length > 0; depth++) {
+        const nextQueue = [];
+        for (const nodeId of queue) {
+          if (selected.size >= MAX_NODES) break;
+
+          const connectedEdges = fullData.edges.filter(
+            e => e.source === nodeId || e.target === nodeId
+          );
+
+          for (const e of connectedEdges) {
+            const other = e.source === nodeId ? e.target : e.source;
+            if (!selected.has(other) && selected.size < MAX_NODES) {
+              selected.add(other);
+              selectedEdges.add(e);
+              nextQueue.push(other);
+            } else if (selected.has(other)) {
+              selectedEdges.add(e);
+            }
+          }
+        }
+        queue = nextQueue;
+      }
+
+      // 补全选中节点之间的所有边
+      fullData.edges.forEach(e => {
+        if (selected.has(e.source) && selected.has(e.target)) {
+          selectedEdges.add(e);
+        }
+      });
+
+      return {
+        nodes: fullData.nodes.filter(n => selected.has(n.id)),
+        edges: fullData.edges.filter(e => selectedEdges.has(e)),
+      };
+    }
+
+    /** 将图数据转换为 ECharts Graph 格式 */
+    function toEChartsData(graphData) {
+      return {
+        nodes: graphData.nodes.map((n, idx) => ({
+          id: n.id,
+          name: n.label,
+          value: n.type,
+          itemStyle: {
+            color: NODE_COLORS[n.type] || '#999',
+          },
+          symbolSize: n.type === 'person' ? 28 : n.type === 'event' ? 34 : 24,
+          symbol: n.type === 'person' ? 'circle' : n.type === 'event' ? 'rect' : 'diamond',
+          label: {
+            show: true,
+            formatter: n.label.length > 6 ? n.label.slice(0, 5) + '…' : n.label,
+            fontSize: 10,
+            color: n.type === 'person' ? '#1890FF' : n.type === 'event' ? '#F5222D' : '#52C41A',
+            fontWeight: 500,
+            offset: [0, n.type === 'person' ? 18 : n.type === 'event' ? 24 : 16],
+          },
+          // 原始数据保留
+          _raw: n,
+        })),
+        links: graphData.edges.map(e => ({
+          source: e.source,
+          target: e.target,
+          value: e.relation,
+          lineStyle: {
+            color: EDGE_COLORS[e.relation] || '#BFBFBF',
+            width: 1.5,
+            curveness: 0.2,
+            opacity: 0.7,
+          },
+          label: {
+            show: true,
+            formatter: e.relation,
+            fontSize: 9,
+            color: EDGE_COLORS[e.relation] || '#BFBFBF',
+          },
+          // 原始数据保留
+          _raw: e,
+        })),
+      };
+    }
+
+    // ---------- 主渲染 ----------
+
+    function renderGraph(data) {
+      const dom = document.getElementById('graph-container');
+      if (!dom) return;
+
+      // 隐藏加载状态
+      document.getElementById('loading-state').style.display = 'none';
+
+      // 限制节点数
+      const limited = buildLimitedGraph(data);
+
+      if (limited.nodes.length === 0) {
+        document.getElementById('error-state').style.display = 'flex';
+        document.getElementById('error-message').textContent = '没有可显示的图谱数据';
+        return;
+      }
+
+      // 更新统计
+      document.getElementById('node-count').textContent = limited.nodes.length + ' 节点';
+      document.getElementById('edge-count').textContent = limited.edges.length + ' 关系';
+
+      // 构建 ECharts 数据
+      const chartData = toEChartsData(limited);
+
+      // 初始化图表（如已存在则 resize）
+      let chart = echarts.getInstanceByDom(dom);
+      if (!chart) {
+        chart = echarts.init(dom, null, {
+          renderer: 'canvas',
+        });
+      }
+
+      // 小屏防重叠：计算合适的斥力
+      const isSmallScreen = window.innerWidth < 400;
+      const repulsion = isSmallScreen ? 400 : 300;
+
+      const option = {
+        backgroundColor: '#F5F7FA',
+        animationDuration: 800,
+        animationEasingUpdate: 'quinticInOut',
+
+        series: [{
+          type: 'graph',
+          layout: 'force',
+          force: {
+            repulsion: repulsion,
+            edgeLength: isSmallScreen ? [80, 150] : [120, 200],
+            layoutAnimation: false,
+            friction: 0.2,
+            gravity: 0.1,
+          },
+          roam: true,              // 支持缩放/平移（触控双指/单指）
+          draggable: true,         // 拖拽节点
+          data: chartData.nodes,
+          links: chartData.links,
+          categories: [
+            { name: 'person', itemStyle: { color: NODE_COLORS.person } },
+            { name: 'event', itemStyle: { color: NODE_COLORS.event } },
+            { name: 'conversation', itemStyle: { color: NODE_COLORS.conversation } },
+          ],
+          edgeSymbol: ['none', 'arrow'],
+          edgeSymbolSize: [0, 6],
+          lineStyle: {
+            color: 'source',
+            curveness: 0.2,
+            width: 1.5,
+          },
+          label: {
+            show: true,
+            position: 'bottom',
+            fontSize: 10,
+            offset: [0, 4],
+          },
+          emphasis: {
+            focus: 'adjacency',   // 悬停高亮邻接节点
+            lineStyle: {
+              width: 3,
+            },
+          },
+          // 点击事件处理
+          tooltip: {
+            show: true,
+            formatter: function(params) {
+              if (params.dataType === 'node') {
+                const raw = params.data._raw;
+                if (!raw) return params.name;
+                const typeMap = { person: '人物', event: '事件', conversation: '对话' };
+                let html = '<strong>' + raw.label + '</strong>';
+                html += '<br/><span style="color:#999">类型: ' + (typeMap[raw.type] || raw.type) + '</span>';
+                if (raw.properties) {
+                  Object.entries(raw.properties).slice(0, 4).forEach(([k, v]) => {
+                    html += '<br/><span style="color:#999">' + k + ':</span> ' + String(v).slice(0, 40);
+                  });
+                }
+                return html;
+              }
+              if (params.dataType === 'edge') {
+                const raw = params.data._raw;
+                return '<strong>' + (raw ? raw.relation : '') + '</strong>';
+              }
+              return '';
+            },
+            extraCssText: 'graph-tooltip',
+          },
+        }],
+      };
+
+      chart.setOption(option, true);
+
+      // ---------- 点击节点回调（通过 JsBridge 通知 Flutter） ----------
+      chart.on('click', function(params) {
+        if (params.dataType === 'node' && params.data._raw) {
+          const node = params.data._raw;
+          // 通过 URL Scheme 或 全局回调通知 Flutter 容器
+          if (window.__onNodeClick) {
+            window.__onNodeClick(JSON.stringify(node));
+          }
+          // 也通过 Flutter WebView JS Bridge 通知
+          try {
+            if (window.flutter_inappwebview) {
+              window.flutter_inappwebview.callHandler('onNodeClick', JSON.stringify(node));
+            }
+          } catch(e) {
+            // 非 Flutter 环境忽略
+          }
+        }
+      });
+
+      // ---------- 自适应 ----------
+      const resizeHandler = function() {
+        chart && chart.resize();
+      };
+      window.addEventListener('resize', resizeHandler);
+
+      // 隐藏底部提示
+      setTimeout(function() {
+        const hint = document.getElementById('hint');
+        if (hint) hint.classList.add('show');
+        setTimeout(function() {
+          if (hint) hint.classList.remove('show');
+        }, 3000);
+      }, 500);
+
+      // 清理之前的 resize 监听
+      chart._resizeHandler = resizeHandler;
+    }
+
+    // ---------- 错误处理 ----------
+    function showError(message) {
+      document.getElementById('loading-state').style.display = 'none';
+      document.getElementById('error-state').style.display = 'flex';
+      document.getElementById('error-message').textContent = message || '未知错误';
+    }
+
+    // ---------- 公共 API（供 Flutter WebView 调用） ----------
+
+    /**
+     * 加载图数据
+     * @param {string} jsonData - JSON 字符串格式的 GraphData
+     */
+    window.loadGraphData = function(jsonData) {
+      try {
+        const data = typeof jsonData === 'string' ? JSON.parse(jsonData) : jsonData;
+        renderGraph(data);
+      } catch (e) {
+        showError('数据解析失败: ' + e.message);
+        console.error('[MobileGraph] 数据解析错误:', e);
+      }
+    };
+
+    /**
+     * 高亮搜索匹配节点
+     * @param {string} keyword - 搜索关键词
+     */
+    window.searchNodes = function(keyword) {
+      const dom = document.getElementById('graph-container');
+      const chart = echarts.getInstanceByDom(dom);
+      if (!chart) return;
+
+      if (!keyword || !keyword.trim()) {
+        // 清除高亮
+        chart.dispatchAction({ type: 'downplay' });
+        return;
+      }
+
+      const data = chart.getOption().series[0].data;
+      const lowerKeyword = keyword.toLowerCase();
+
+      data.forEach(function(node, idx) {
+        const raw = node._raw;
+        if (raw) {
+          const matchLabel = raw.label && raw.label.toLowerCase().includes(lowerKeyword);
+          const matchProps = raw.properties && Object.values(raw.properties).some(
+            v => typeof v === 'string' && v.toLowerCase().includes(lowerKeyword)
+          );
+          if (matchLabel || matchProps) {
+            chart.dispatchAction({
+              type: 'highlight',
+              seriesIndex: 0,
+              dataIndex: idx,
+            });
+          } else {
+            chart.dispatchAction({
+              type: 'downplay',
+              seriesIndex: 0,
+              dataIndex: idx,
+            });
+          }
+        }
+      });
+    };
+
+    /**
+     * 更新图谱数据（增量刷新）
+     * @param {string} jsonData - 新的图数据 JSON
+     */
+    window.updateGraphData = function(jsonData) {
+      window.loadGraphData(jsonData);
+    };
+
+    // ---------- 模拟初始数据（独立运行调试） ----------
+
+    // 如果是独立打开（非 Flutter WebView），加载模拟数据
+    if (!window.flutter_inappwebview) {
+      console.log('[MobileGraph] 独立模式，加载模拟数据');
+      // 通过 fetch 或直接内嵌数据
+      var mockData = {
+        nodes: [
+          { id: 'p1', type: 'person', label: '张三', properties: { role: '项目经理' } },
+          { id: 'p2', type: 'person', label: '李四', properties: { role: '前端开发' } },
+          { id: 'p3', type: 'person', label: '王五', properties: { role: '后端开发' } },
+          { id: 'p4', type: 'person', label: '赵六', properties: { role: '测试' } },
+          { id: 'e1', type: 'event', label: '需求评审会', properties: { date: '2026-06-01' } },
+          { id: 'e2', type: 'event', label: '代码审查', properties: { date: '2026-06-10' } },
+          { id: 'c1', type: 'conversation', label: '项目讨论', properties: { speaker_count: 3 } },
+        ],
+        edges: [
+          { source: 'p1', target: 'e1', relation: '参与', properties: { weight: 1.0 } },
+          { source: 'p2', target: 'e1', relation: '参与', properties: { weight: 0.8 } },
+          { source: 'p3', target: 'e1', relation: '参与', properties: { weight: 0.7 } },
+          { source: 'p1', target: 'e2', relation: '参与', properties: { weight: 0.6 } },
+          { source: 'p4', target: 'e2', relation: '参与', properties: { weight: 0.9 } },
+          { source: 'e1', target: 'c1', relation: '触发', properties: { weight: 0.5 } },
+          { source: 'p1', target: 'p2', relation: '相关', properties: { weight: 0.4 } },
+        ],
+      };
+      setTimeout(function() { renderGraph(mockData); }, 500);
+    }
+
+  })();
+  </script>
+</body>
+</html>

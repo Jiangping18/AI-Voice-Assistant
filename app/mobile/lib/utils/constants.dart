@@ -78,3 +78,26 @@ class BridgeConstants {
   /// 状态事件通道名称 (EventChannel)
   static const String stateEventChannelName = 'com.aiassistant.mobile/state_events';
 }
+
+/// 提醒服务常量
+class ReminderConstants {
+  ReminderConstants._();
+
+  /// 提醒通知渠道 ID
+  static const String reminderChannelId = 'ai_reminder_channel';
+
+  /// 提醒通知渠道名称
+  static const String reminderChannelName = '待办提醒';
+
+  /// 提醒通知渠道描述
+  static const String reminderChannelDesc = '接收待办事项提醒通知';
+
+  /// 通知 ID 基础值（避免与前台服务冲突）
+  static const int notifIdBase = 2000;
+
+  /// 默认提前提醒时间（分钟）
+  static const List<int> defaultLeadTimes = [15, 30, 60];
+
+  /// 状态上报自动重试间隔（秒）
+  static const int retryIntervalSeconds = 30;
+}
