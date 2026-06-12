@@ -69,7 +69,7 @@ export class TransportManager extends EventEmitter {
 
       this.server.listen(this.config.dataPort, '0.0.0.0', () => {
         const addr = this.server!.address();
-        const port = typeof addr === 'object' ? addr.port : this.config.dataPort;
+        const port = addr && typeof addr === 'object' ? addr.port : this.config.dataPort;
         this._setState('connecting' as ConnectionState);
         resolve(port);
       });

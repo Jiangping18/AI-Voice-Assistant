@@ -16,7 +16,8 @@ import * as net from 'node:net';
 import { EventEmitter } from 'node:events';
 import { deserializeChunk, verifyChunkCRC, reassemble } from './chunk';
 import { decryptPacket } from '../crypto/utils';
-import type { AudioChunk, TransferProgress, ChunkTransferState } from '../types';
+import type { AudioChunk, TransferProgress } from '../types';
+import { ChunkTransferState } from '../types';
 import { DEFAULT_COMM_CONFIG } from '../config';
 
 /** 接收器事件 */

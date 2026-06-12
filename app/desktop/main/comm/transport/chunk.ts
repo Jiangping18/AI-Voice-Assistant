@@ -15,7 +15,8 @@
  */
 
 import * as zlib from 'node:zlib';
-import type { AudioChunk, TransferProgress, ChunkTransferState } from '../types';
+import type { AudioChunk, TransferProgress } from '../types';
+import { ChunkTransferState } from '../types';
 
 /** 分片头部固定部分长度（不含 audioId 和 data） */
 export const CHUNK_HEADER_FIXED = 4 + 2 + 8 + 8 + 4; // 26 字节

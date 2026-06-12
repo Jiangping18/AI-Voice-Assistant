@@ -8,7 +8,8 @@
  * @module diarization/engine
  */
 
-import type { DiarizationConfig, DiarizationResult, DiarizationSegment } from './types';
+import type { DiarizationResult, DiarizationSegment } from './types';
+import type { DiarizationConfig } from '../asr/types';
 import { DEFAULT_DIARIZATION_CONFIG } from '../asr/config';
 
 // ===================== Sherpa-ONNX 引擎 =====================

@@ -7,11 +7,13 @@
  * @module diarization
  */
 
-import type { DiarizationConfig, DiarizationResult, DiarizationSegment } from './types';
+import type { DiarizationResult, DiarizationSegment } from './types';
+import type { DiarizationConfig } from '../asr/types';
 import { createDiarizationEngine, SherpaOnnxDiarizationEngine } from './engine';
 import { DEFAULT_DIARIZATION_CONFIG } from '../asr/config';
 
-export type { DiarizationConfig, DiarizationResult, DiarizationSegment };
+export type { DiarizationResult, DiarizationSegment };
+export type { DiarizationConfig };
 export { SherpaOnnxDiarizationEngine };
 export { createDiarizationEngine };
 

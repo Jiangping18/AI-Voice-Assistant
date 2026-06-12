@@ -10,7 +10,7 @@
  * @module pipeline
  */
 
-import type { ASRConfig, ASRSegment, ASRResult } from '../asr/types';
+import type { OnlineASRConfig as ASRConfig, ASRSegment, ASRResult } from '../asr/types';
 import type { PipelineConfig, PipelineCallbacks, PipelineStats } from './types';
 import { PipelineState } from './types';
 import { ASRService } from '../asr/index';

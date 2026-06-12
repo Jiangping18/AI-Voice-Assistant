@@ -32,7 +32,7 @@ export interface SignalingEvents {
 
 /** 信令服务器 */
 export class SignalingServer extends EventEmitter {
-  private httpServer: http.Server;
+  private httpServer!: http.Server;
   private wsServer: WSServer | null = null;
   private connections = new Map<string, WSConnection>();
   private peerKeys = new Map<string, string>(); // peerId → sharedKey(hex)

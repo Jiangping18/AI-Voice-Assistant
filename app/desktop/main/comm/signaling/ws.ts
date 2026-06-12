@@ -85,8 +85,10 @@ export class WSConnection extends EventEmitter {
     while (true) {
       const frame = parseFrame(this.buf);
       if (!frame) break;
-      this.buf = this.buf.subarray(2 + (this.buf[1] & 0x7f < 126 ? 0 : this.buf[1] & 0x7f === 126 ? 2 : 8) +
-        ((this.buf[1] & 0x80) ? 4 : 0) + frame.payload.length);
+      const maskLen = (this.buf[1] & 0x80) ? 4 : 0;
+      const payloadLen = this.buf[1] & 0x7f;
+      const headerLen = 2 + (payloadLen < 126 ? 0 : payloadLen === 126 ? 2 : 8) + maskLen + frame.payload.length;
+      this.buf = this.buf.subarray(headerLen);
 
       switch (frame.opcode) {
         case OP_TEXT: this.emit('message', frame.payload.toString('utf-8')); break;
