@@ -129,16 +129,21 @@ class ReminderService:
         if not raw_content or not raw_content.strip():
             raise ReminderValidationError("content 不能为空")
 
-        # deadline
+        # deadline - 空值自动兜底为明天
         deadline = item.get("deadline")
         if not deadline:
-            raise ReminderValidationError("deadline 不能为空")
+            from datetime import timedelta
+            fallback = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT23:59:59+00:00")
+            deadline = fallback
+            logger.warning(f"deadline 为空，自动兜底为: {fallback}")
 
         deadline_str = str(deadline).strip()
         if not ISO8601_PATTERN.match(deadline_str):
-            raise ReminderValidationError(
-                f"deadline 格式非法（需 ISO 8601）: {deadline_str}"
-            )
+            # 格式不对则兜底为明天
+            from datetime import timedelta
+            fallback = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT23:59:59+00:00")
+            deadline_str = fallback
+            logger.warning(f"deadline 格式非法（{deadline_str}），自动兜底为: {fallback}")
 
         # Python 3.10 不支持 Z 后缀，替换为 +00:00
         normalized = deadline_str
@@ -156,7 +161,11 @@ class ReminderService:
         else:
             dt_utc = dt.astimezone(timezone.utc)
         if dt_utc < now_utc:
-            raise ReminderValidationError(f"deadline 是过去时间: {deadline_str}")
+            from datetime import timedelta
+            fallback = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT23:59:59+00:00")
+            logger.warning(f"deadline 是过去时间（{deadline_str}），自动兜底为: {fallback}")
+            deadline_str = fallback
+            normalized = fallback
 
         # 可选字段
         assignee = item.get("assignee", "")

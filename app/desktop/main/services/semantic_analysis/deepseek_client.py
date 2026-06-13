@@ -26,6 +26,10 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+# 启动时强制清除代理环境变量
+for _key in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']:
+    os.environ.pop(_key, None)
+
 from .models import AnalysisResult
 
 logger = logging.getLogger(__name__)
@@ -58,15 +62,17 @@ def _load_api_key() -> str:
         if not path:
             continue
         if os.path.isfile(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    key = f.read().strip()
-                if key:
-                    _API_KEY = key
-                    logger.info(f"已加载 DeepSeek API Key: {path}")
-                    return key
-            except OSError as e:
-                logger.warning(f"读取 API Key 文件失败: {path}, {e}")
+            # 尝试多种编码读取 Key 文件
+            for enc in ["utf-8", "utf-16", "gbk", "gb2312", "latin-1"]:
+                try:
+                    with open(path, "r", encoding=enc) as f:
+                        key = f.read().strip()
+                    if key:
+                        _API_KEY = key
+                        logger.info(f"已加载 DeepSeek API Key: {path} (编码: {enc})")
+                        return key
+                except (UnicodeDecodeError, OSError):
+                    continue
 
     raise FileNotFoundError(
         "DeepSeek API Key 未配置。请创建 config/deepseek_key.txt "
@@ -76,11 +82,15 @@ def _load_api_key() -> str:
 
 def _call_api(payload: dict) -> str:
     """发起一次 DeepSeek API 请求"""
+    import urllib.request
+    import urllib.error
+
     api_key = _load_api_key()
+
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     req = urllib.request.Request(
-        DEEPSEEK_API_URL,
+        "https://api.deepseek.com/v1/chat/completions",
         data=data,
         headers={
             "Content-Type": "application/json; charset=utf-8",
@@ -89,6 +99,7 @@ def _call_api(payload: dict) -> str:
         method="POST",
     )
 
+    # 和 test_api.py 一样，直接用 urlopen，不加任何 ProxyHandler
     with urllib.request.urlopen(req, timeout=DEEPSEEK_TIMEOUT) as resp:
         raw = resp.read().decode("utf-8")
         logger.debug(f"API 响应原始大小: {len(raw)} bytes")
@@ -168,7 +179,7 @@ def call_with_retry(system_prompt: str, user_prompt: str) -> dict[str, Any]:
                 _backoff(attempt)
             continue
 
-        except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
             last_error = e
             logger.warning(
                 f"网络请求失败 (attempt {attempt}/{MAX_RETRIES}): {type(e).__name__}: {e}"
